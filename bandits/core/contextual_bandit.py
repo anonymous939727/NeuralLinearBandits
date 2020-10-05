@@ -61,8 +61,8 @@ def run_contextual_bandit(context_dim, num_actions, dataset, algos):
     h_actions = np.vstack((h_actions, np.array(actions)))
     h_rewards = np.vstack((h_rewards, np.array(rewards)))
 
-    # if i % 500 == 0:
-    #   print(i)
+    if i % 500 == 0:
+      print(i)
   return h_actions, h_rewards
 
 

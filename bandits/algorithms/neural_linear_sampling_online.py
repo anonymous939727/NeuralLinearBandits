@@ -73,7 +73,10 @@ class NeuralLinearPosteriorSamplingOnline(BanditAlgorithm):
     self.mu_prior_flag = self.hparams.mu_prior_flag
     self.sigma_prior_flag = self.hparams.sigma_prior_flag
 
-    self.precision_prior=self.precision[:]
+    self.precision_prior=[
+        self.lambda_prior * np.eye(self.param_dim)
+        for _ in range(self.hparams.num_actions)]
+
     self.mu_prior = np.zeros((self.param_dim,self.hparams.num_actions))
     # Inverse Gamma prior for each sigma2_i
     self._a0 = self.hparams.a0
@@ -204,61 +207,37 @@ class NeuralLinearPosteriorSamplingOnline(BanditAlgorithm):
 
     cov_prior = (self.EPSILON) * np.eye(self.param_dim)
 
-    # Retrain the network on the original data (data_h)
-    if self.intercept:
-      z_context = np.append(z_context, 1.0).reshape((1, self.latent_dim + 1))
-    self.precision[action] += np.dot(z_context.T, z_context)
-    self.cov[action] = np.linalg.inv(self.precision[action])
-    self.f[action] += (z_context.T * reward)[:, 0]
+
 
     if self.t % self.update_freq_nn == 0 and self.t >= self.hparams.batch_size:
 
-      if self.hparams.reset_lr:
-        self.bnn.assign_lr()
+      # THIS SHOULD BE ON ONLY WHEN NOT ONLINE:
+      # if self.hparams.reset_lr:
+      #   self.bnn.assign_lr()
+      # self.bnn.train(self.data_h, self.num_epochs)
 
-      # if not self.first_train:
-      #   self.bnn.train(self.data_h, 800)
-      #   self.first_train = True
-      # else:
-      self.precision_prior , self.precision, self.cov,  self.f = self.bnn.train_online(self.data_h, self.num_epochs, self.cov, cov_prior, self.pgd_steps, self.hparams.pgd_freq, sig_prior=self.sigma_prior_flag)
-
-
-      # Update the latent representation of every datapoint collected so far
-
-      # new_z = self.bnn.sess.run(self.bnn.nn,
-      #                           feed_dict={self.bnn.x: self.data_h.contexts})
-
-      # Update the confidence prior using feature uncertainty matching
+      self.precision_prior , self.precision, self.cov,  self.f = self.bnn.train_online(self.data_h,
+                                                                                       self.num_epochs,
+                                                                                       self.cov,
+                                                                                       cov_prior,
+                                                                                       self.pgd_steps,
+                                                                                       self.precision_prior,
+                                                                                       pgd_freq=self.hparams.pgd_freq,
+                                                                                       sig_prior=self.sigma_prior_flag)
 
       if self.mu_prior_flag == 1:
         weights_p, bias_p = self.bnn.get_mu_prior()
         self.mu_prior[:self.latent_dim] = weights_p
         self.mu_prior[-1] = bias_p
 
-      # self.latent_h.replace_data(contexts=new_z)
-      # Update the Bayesian Linear Regression
 
-      # inds = np.argmax(w, 1)
-      # y = np.sum(y * w, 1)
-      # for action_v in range(self.hparams.num_actions):
-      #   # Update action posterior with formulas: \beta | z,y ~ N(mu_q, cov_q)
-      #   z_i = z[inds == action]
-      #   y_i = y[inds == action]
-      #
-      #   # The algorithm could be improved with sequential formulas (cheaper)
-      #   self.precision[action_v] = (np.dot(z_i.T, z_i) + self.precision_prior[action_v])
-      #   self.cov[action_v] = np.linalg.inv(self.precision[action_v])
-      #   self.f[action_v] = np.dot(z_i.T, y_i)
-      #
-      # for action_v in range(self.hparams.num_actions):
-      #   # Update action posterior with formulas: \beta | z,y ~ N(mu_q, cov_q)
-      #   z, y = self.latent_h.get_data(action_v)
-      #
-      #   # The algorithm could be improved with sequential formulas (cheaper)
-      #   self.precision[action_v] = (np.dot(z.T, z) + self.precision_prior[action_v])
-      #   self.cov[action_v] = np.linalg.inv(self.precision[action_v])
-      #   self.f[action_v] = np.dot(z.T, y)
-
+    else:
+      # Retrain the network on the original data (data_h)
+      if self.intercept:
+        z_context = np.append(z_context, 1.0).reshape((1, self.latent_dim + 1))
+      self.precision[action] += np.dot(z_context.T, z_context)
+      self.cov[action] = np.linalg.inv(self.precision[action] + self.precision_prior[action])
+      self.f[action] += (z_context.T * reward)[:, 0]
 
 
 

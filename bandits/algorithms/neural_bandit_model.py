@@ -104,34 +104,35 @@ class NeuralBanditModel(BayesianNN):
 
         self.global_step = tf.train.get_or_create_global_step()
 
-        # context
-        self.x = tf.placeholder(
-            shape=[None, self.hparams.context_dim],
-            dtype=tf.float32,
-            name="{}_x".format(self.name))
+        with tf.device('gpu:0'):
+            # context
+            self.x = tf.placeholder(
+                shape=[None, self.hparams.context_dim],
+                dtype=tf.float32,
+                name="{}_x".format(self.name))
 
-        # reward vector
-        self.y = tf.placeholder(
-            shape=[None, self.hparams.num_actions],
-            dtype=tf.float32,
-            name="{}_y".format(self.name))
+            # reward vector
+            self.y = tf.placeholder(
+                shape=[None, self.hparams.num_actions],
+                dtype=tf.float32,
+                name="{}_y".format(self.name))
 
-        # weights (1 for selected action, 0 otherwise)
-        self.weights = tf.placeholder(
-            shape=[None, self.hparams.num_actions],
-            dtype=tf.float32,
-            name="{}_w".format(self.name))
+            # weights (1 for selected action, 0 otherwise)
+            self.weights = tf.placeholder(
+                shape=[None, self.hparams.num_actions],
+                dtype=tf.float32,
+                name="{}_w".format(self.name))
 
-        # with tf.variable_scope("prediction_{}".format(self.name)):
-        self.nn, self.y_pred = self.forward_pass()
-        self.loss = tf.squared_difference(self.y_pred, self.y)
-        self.weighted_loss = tf.multiply(self.weights, self.loss)
-        self.cost = tf.reduce_sum(self.weighted_loss) / self.hparams.batch_size
+            # with tf.variable_scope("prediction_{}".format(self.name)):
+            self.nn, self.y_pred = self.forward_pass()
+            self.loss = tf.squared_difference(self.y_pred, self.y)
+            self.weighted_loss = tf.multiply(self.weights, self.loss)
+            self.cost = tf.reduce_sum(self.weighted_loss) / self.hparams.batch_size
 
         if self.hparams.activate_decay:
           self.lr = tf.train.inverse_time_decay(
               self.hparams.initial_lr, self.global_step,
-              1, self.hparams.lr_decay_rate)
+              10, self.hparams.lr_decay_rate)
         else:
           self.lr = tf.Variable(self.hparams.initial_lr, trainable=False)
 
@@ -140,18 +141,19 @@ class NeuralBanditModel(BayesianNN):
         self.summary_writer = tf.summary.FileWriter(
             "{}/graph_{}".format(FLAGS.logdir, self.name), self.sess.graph)
 
-        tvars = tf.trainable_variables()
-        grads, _ = tf.clip_by_global_norm(
-            tf.gradients(self.cost, tvars), self.hparams.max_grad_norm)
+        with tf.device('gpu:0'):
+            tvars = tf.trainable_variables()
+            grads, _ = tf.clip_by_global_norm(
+                tf.gradients(self.cost, tvars), self.hparams.max_grad_norm)
 
-        self.optimizer = self.select_optimizer()
+            self.optimizer = self.select_optimizer()
 
-        self.train_op = self.optimizer.apply_gradients(
-            zip(grads, tvars), global_step=self.global_step)
+            self.train_op = self.optimizer.apply_gradients(
+                zip(grads, tvars), global_step=self.global_step)
 
-        self.init = tf.global_variables_initializer()
+            self.init = tf.global_variables_initializer()
 
-        self.initialize_graph()
+            self.initialize_graph()
 
   def initialize_graph(self):
     """Initializes all variables."""
@@ -219,7 +221,7 @@ class NeuralBanditModel(BayesianNN):
 
       self.times_trained += 1
 
-  def train_online(self, data, num_steps, intial_cov, cov_prior, pgd_steps, pgd_freq=1, sig_prior=1):
+  def train_online(self, data, num_steps, intial_cov, cov_prior, pgd_steps, prec_prior, pgd_freq=1, sig_prior=1):
     """Trains the network for num_steps, using the provided data.
 
     Args:
@@ -253,10 +255,11 @@ class NeuralBanditModel(BayesianNN):
                 if z_i.shape[0] != 0:
                     d = np.sum(np.dot(z_old_i, X) * z_old_i, 1)
                     """compute new data correlations"""
-                    phi = []
-                    for c in z_i:
-                        phi.append(np.outer(c, c))
-                    phi = np.array(phi)
+                    # phi = []
+                    # for c in z_i:
+                    #     phi.append(np.outer(c, c))
+                    # phi = np.array(phi)
+                    phi = z_i[:,np.newaxis,:] * z_i[:,:,np.newaxis]
 
 
                     for k in range(pgd_steps):
@@ -264,7 +267,7 @@ class NeuralBanditModel(BayesianNN):
                         diff = np.sum(X_batch * phi, (1, 2)) - d
                         diff = np.reshape(diff, (-1, 1, 1))
                         grad = 2.0 * phi * diff
-                        grad = np.sum(grad, 0)
+                        grad = np.mean(grad, 0)
 
                         X = X - lr * grad
                         # project X into PSD space
@@ -294,22 +297,38 @@ class NeuralBanditModel(BayesianNN):
               [self.nn],
               feed_dict={self.x: x})
 
-          cov = intial_cov
+          precision_prior = prec_prior
+          precision = []
+          cov_new = []
+          f = []
+          inds = np.argmax(w, 1)
+          y = np.sum(y * w, 1)
+          for action, X in enumerate(cov):
+            # Update action posterior with formulas: \beta | z,y ~ N(mu_q, cov_q)
+            z_i = z[inds == action]
+            y_i = y[inds == action]
+            # precision.append(np.dot(z_i.T, z_i) + precision_prior[action])
+            precision.append(np.dot(z_i.T, z_i))
+            cov_new.append(np.linalg.inv(precision[action] + precision_prior[action]))
+            f.append(np.dot(z_i.T, y_i))
 
-      precision_prior = []
-      precision = []
-      cov_new = []
-      f = []
-      inds = np.argmax(w, 1)
-      y = np.sum(y * w, 1)
-      for action, X in enumerate(cov):
-        precision_prior.append(np.linalg.inv(X))
-        # Update action posterior with formulas: \beta | z,y ~ N(mu_q, cov_q)
-        z_i = z[inds == action]
-        y_i = y[inds == action]
-        precision.append(np.dot(z_i.T, z_i) + precision_prior[action])
-        cov_new.append(np.linalg.inv(precision[action]))
-        f.append(np.dot(z_i.T, y_i))
+      else:
+
+          precision_prior = []
+          precision = []
+          cov_new = []
+          f = []
+          inds = np.argmax(w, 1)
+          y = np.sum(y * w, 1)
+          for action, X in enumerate(cov):
+            precision_prior.append(np.linalg.inv(X))
+            # Update action posterior with formulas: \beta | z,y ~ N(mu_q, cov_q)
+            z_i = z[inds == action]
+            y_i = y[inds == action]
+            # precision.append(np.dot(z_i.T, z_i) + precision_prior[action])
+            precision.append(np.dot(z_i.T, z_i))
+            cov_new.append(np.linalg.inv(precision[action] + precision_prior[action]))
+            f.append(np.dot(z_i.T, y_i))
 
 
 

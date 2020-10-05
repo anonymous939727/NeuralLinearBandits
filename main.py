@@ -349,7 +349,7 @@ def main(argv):
   num_contexts = 5000
   tfn=400
   tfe=tfn*2
-  data_type = 'amazon'
+  data_type = 'covtype'
   l_sizes=[50]
   outdir  ="./"
 
@@ -606,9 +606,9 @@ def main(argv):
       algos = [
           # NeuralLinearPosteriorSampling('NeuralLinear', hparams_nlinear),
           # NeuralLinearPosteriorSamplingFiniteMemory('NeuralLinearFiniteMemory', hparams_nlinear_finite_memory),
-          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline', hparams_nlinear_online),
-          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline_noSigP', hparams_nlinear_online_no_sig_prior),
-          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline_noP', hparams_nlinear_online_no_prior),
+          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline', hparams_nlinear_online, textflag=True),
+          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline_noSigP', hparams_nlinear_online_no_sig_prior, textflag=True),
+          NeuralLinearPosteriorSamplingOnline('NeuralLinearOnline_noP', hparams_nlinear_online_no_prior, textflag=True),
           # NeuralLinearPosteriorSamplingFiniteMemory('NeuralLinearFiniteMemory_noP',
           #                                           hparams_nlinear_finite_memory_no_prior),
           # NeuralLinearPosteriorSamplingFiniteMemory('NeuralLinearFiniteMemory_noSigP',
